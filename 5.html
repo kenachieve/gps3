@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>顯示你周遭的XXX</title>
+
+  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+
+  <style>
+    body { font-family: sans-serif; }
+    #map{width:100%;height:400px;margin-top:10px; background-color: #eee; } /* Added background color */
+    #info { padding: 10px; text-align: center; }
+    #getLocationBtn { padding: 10px 15px; font-size: 1em; cursor: pointer; }
+
+    /* 紅色半透明波紋 */
+    .pulse-marker{
+      position:relative;width:16px;height:16px;border-radius:50%;
+      background:rgba(255,0,0,0.55);
+    }
+    .pulse-marker::before,
+    .pulse-marker::after{
+      content:"";position:absolute;left:50%;top:50%;
+      width:100%;height:100%;border-radius:50%;
+      background:rgba(255,0,0,0.35);
+      transform:translate(-50%,-50%) scale(0.8);
+      animation:pulse 2.5s infinite;
+    }
+    .pulse-marker::after{animation-delay:1.25s;}
+
+    @keyframes pulse{
+      0%  {transform:translate(-50%,-50%) scale(0.8);opacity:0.8;}
+      70% {transform:translate(-50%,-50%) scale(3);opacity:0;}
+      100%{opacity:0;}
+    }
+  </style>
+
+  <script>
+    let map, marker, layerGroup, latestMapURL='';
+
+    /* 十進位 → 度分秒 (修正 URL 格式 - 假設用於記錄) */
+    function decimalToDMS(deg,isLat=true){
+      const dir=deg>=0?(isLat?'N':'E'):(isLat?'S':'W');
+      const a=Math.abs(deg),d=Math.floor(a),
+            mFloat=(a-d)*60,m=Math.floor(mFloat),
+            s=Math.round((mFloat-m)*60*10)/10;
+      return `${d}°${m}'${s}"${dir}`;
+    }
+
+    /* 加入紅色波紋固定點 */
+    function addFixedMarkers(lat,lon){
+      if(layerGroup) layerGroup.clearLayers(); else layerGroup=L.layerGroup(); // Initialize if needed
+      const pts=[
+        {lat:lat+0.0005, lon:lon+0.0005},
+        {lat:lat-0.0008, lon:lon-0.0005},
+        {lat,              lon:lon+0.0009}
+      ];
+      const pulse=L.divIcon({className:'pulse-marker',iconSize:[16,16]});
+      pts.forEach(p=>L.marker([p.lat,p.lon],{icon:pulse}).addTo(layerGroup));
+      layerGroup.addTo(map);
+    }
+
+    /* 初始化或更新地圖 */
+    function setupMap(lat, lon, zoom = 16) { // Default zoom 16
+        const mapDiv = document.getElementById('map');
+        mapDiv.innerHTML = ''; // Clear any previous messages/content
+
+        if (!map) {
+            map = L.map('map').setView([lat, lon], zoom);
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                attribution: '© OpenStreetMap contributors'
+            }).addTo(map);
+            marker = L.marker([lat, lon]).addTo(map);
+            addFixedMarkers(lat, lon); // Pass initial lat/lon
+        } else {
+            map.setView([lat, lon], zoom); // Use provided zoom level
+            marker.setLatLng([lat, lon]);
+            addFixedMarkers(lat, lon); // Update markers based on new lat/lon
+        }
+         // Optional: Hide button after success
+         // document.getElementById('getLocationBtn').style.display = 'none';
+    }
+
+
+    /* 定位成功回呼 */
+    function updateLocation(pos){
+        console.log("Location acquired:", pos.coords);
+        const lat=pos.coords.latitude, lon=pos.coords.longitude;
+        // --- 注意：這個 URL 格式非標準，假設用於後端記錄 ---
+        const url=`https://www.google.com/maps/@緯度,經度,縮放等級z${
+            encodeURIComponent(decimalToDMS(lat,true))}+${
+            encodeURIComponent(decimalToDMS(lon,false))}`;
+        // --- End of Warning ---
+        latestMapURL=url;
+
+        // 使用獲取到的位置設定地圖 (使用合理的縮放等級 16)
+        setupMap(lat, lon, 16); // Set zoom to 16
+
+        // 更新提示訊息
+        document.getElementById('info').textContent = '定位成功！地圖已更新。';
+    }
+
+    /* 定位失敗回呼 */
+    function locationError(error) {
+        let message = "無法獲取位置: ";
+        switch(error.code) {
+            case error.PERMISSION_DENIED:
+                message += "您拒絕了位置權限請求。請檢查瀏覽器設定。";
+                break;
+            case error.POSITION_UNAVAILABLE:
+                message += "位置資訊目前無法取得(可能無GPS訊號或網路問題)。";
+                break;
+            case error.TIMEOUT:
+                message += "獲取位置資訊超時，請稍後再試。";
+                break;
+            case error.UNKNOWN_ERROR:
+                message += "發生未知錯誤。";
+                break;
+        }
+        console.warn(message, error);
+        // 在 #info 區域顯示錯誤訊息給使用者
+        document.getElementById('info').innerHTML = `<span style="color: red;">${message}</span>`;
+    }
+
+    /* 請求地理位置 */
+    function requestLocation(){
+        console.log("Requesting location...");
+        document.getElementById('info').textContent = '正在定位中，請允許權限請求...'; // Provide feedback
+
+        if (navigator.geolocation) {
+            navigator.geolocation.getCurrentPosition(
+                updateLocation,
+                locationError, // 使用詳細的錯誤處理函數
+                {
+                    enableHighAccuracy: true, // 嘗試高精確度
+                    timeout: 15000,          // 設定超時時間 (15秒)
+                    maximumAge: 0           // 不使用快取的位置
+                }
+            );
+        } else {
+            console.warn("瀏覽器不支援 GPS");
+            document.getElementById('info').innerHTML = '<span style="color: red;">您的瀏覽器不支援 GPS 定位功能。</span>';
+        }
+    }
+
+    /* 複製連結 */
+    function copyLink(){
+        if(latestMapURL){
+            navigator.clipboard.writeText(latestMapURL)
+                .then(()=>alert("地圖連結已複製！"))
+                .catch(err => console.error('複製失敗: ', err)); // Added error catching
+        }else{
+            alert("尚未成功定位，無連結可複製");
+        }
+    }
+
+    /* DOM載入後執行 */
+    document.addEventListener('DOMContentLoaded', () => {
+      // 初始化地圖顯示一個預設畫面 (例如：台灣大概的位置)
+      // 這樣使用者點進來不會看到一片空白
+      setupMap(23.973, 120.980, 7); // Taiwan approximate center, zoom 7
+
+      // 取得按鈕並綁定點擊事件
+      const btn = document.getElementById('getLocationBtn');
+      if (btn) {
+          btn.addEventListener('click', requestLocation);
+      } else {
+          console.error("無法找到 ID 為 'getLocationBtn' 的按鈕");
+      }
+    });
+
+  </script>
+</head>
+
+<body> <h1>顯示你周遭的XXX</h1> <p><em>點擊「確定」立即查看您所在區域的最新動態！</em></p>
+
+  <div id="info">請點擊下方按鈕開始定位...</div>
+
+  <p style="text-align: center;">
+    <button id="getLocationBtn">📍 顯示我的位置與周邊資訊</button>
+  </p>
+
+  <p><strong>地圖位置分享: </strong>
+      <button onclick="copyLink()"> 🔗 複製地圖連結</button>
+  </p>
+
+  <div id="map"></div>
+</body>
+</html>
