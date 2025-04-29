@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>顯示你周遭的 XXX</title>
+
+  <!-- Leaflet -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+
+  <style>
+    #map { width: 100%; height: 400px; margin-top: 10px; }
+
+    /* ▼ 紅色半透明波紋（可自行調整大小、透明度、動畫時間等） */
+    .pulse-marker {
+      position: relative;
+      width: 16px;           /* ← 圖示寬度 */
+      height: 16px;          /* ← 圖示高度 */
+      border-radius: 50%;
+      background: rgba(255,0,0,0.55);
+    }
+    .pulse-marker::before,
+    .pulse-marker::after {
+      content: "";
+      position: absolute;
+      left: 50%; top: 50%;
+      width: 100%; height: 100%;
+      border-radius: 50%;
+      background: rgba(255,0,0,0.35);
+      transform: translate(-50%,-50%) scale(0.8);
+      animation: pulse 2.5s infinite; /* ← 動畫長度 */
+    }
+    .pulse-marker::after { animation-delay: 1.25s; }
+
+    @keyframes pulse {
+      0%   { transform: translate(-50%,-50%) scale(0.8); opacity: 0.8; }
+      70%  { transform: translate(-50%,-50%) scale(3);   opacity: 0; }
+      100% { opacity: 0; }
+    }
+  </style>
+</head>
+
+<body>
+  <h1>顯示你周遭的 XXX</h1>
+
+  <!-- 1️⃣ 使用者手勢 ─ 點擊後才請求定位 -->
+  <button id="locBtn">📍 取得目前位置</button>
+  &nbsp; <strong>地圖位置分享:</strong>
+  <button id="copyBtn">🔗 複製地圖連結</button>
+
+  <div id="map"></div>
+
+  <script>
+    let map, marker, layerGroup;
+    let latestMapURL = '';     // 目前定位對應的 Google Maps 連結（供複製）
+
+    /* ===== 工具函式 ===== */
+
+    // 十進位 → 度分秒（用於組成 Google Maps 連結）
+    function decimalToDMS(deg, isLat = true) {
+      const dir = deg >= 0 ? (isLat ? 'N' : 'E') : (isLat ? 'S' : 'W');
+      const abs = Math.abs(deg);
+      const d = Math.floor(abs);
+      const mFloat = (abs - d) * 60;
+      const m = Math.floor(mFloat);
+      const s = Math.round((mFloat - m) * 60 * 10) / 10;
+      return `${d}°${m}'${s}"${dir}`;
+    }
+
+    // 地圖初始化
+    function initMap(lat, lon) {
+      map = L.map('map').setView([lat, lon], 15);   // ← 視野大小
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '&copy; OpenStreetMap contributors'
+      }).addTo(map);
+
+      marker = L.marker([lat, lon]).addTo(map);
+      addFixedMarkers(lat, lon);
+    }
+
+    // 加入紅色波紋標記（示範 3 個點，可自行增刪）
+    function addFixedMarkers(lat, lon) {
+      if (layerGroup) layerGroup.clearLayers();
+      layerGroup = L.layerGroup().addTo(map);
+
+      const pts = [
+        { lat: lat + 0.0005, lon: lon + 0.0005 },
+        { lat: lat - 0.0008, lon: lon - 0.0005 },
+        { lat: lat,          lon: lon + 0.0009 }
+      ];
+      const pulse = L.divIcon({ className: 'pulse-marker', iconSize: [16, 16] });
+
+      pts.forEach(p => L.marker([p.lat, p.lon], { icon: pulse }).addTo(layerGroup));
+    }
+
+    // 定位成功後更新地圖與分享連結
+    function updateLocation(pos) {
+      const lat = pos.coords.latitude;
+      const lon = pos.coords.longitude;
+
+      // Google Maps 連結 (度分秒格式，Safari 上複製較美觀)
+      latestMapURL =
+        `https://www.google.com/maps/place/` +
+        encodeURIComponent(decimalToDMS(lat, true)) + '+' +
+        encodeURIComponent(decimalToDMS(lon, false));
+
+      if (!map) {
+        initMap(lat, lon);
+      } else {
+        map.setView([lat, lon], 15);
+        marker.setLatLng([lat, lon]);
+        addFixedMarkers(lat, lon);
+      }
+    }
+
+    // 錯誤處理（簡化版）
+    function handleGeoError(err) {
+      const msg = (err.code === 1)
+        ? '已拒絕定位權限，請到 Safari 設定 → 網站 → 位置，改成「允許」'
+        : `定位失敗（錯誤碼 ${err.code}）：${err.message}`;
+      alert(msg);
+    }
+
+    // 2️⃣ 按鈕 – 觸發定位
+    document.getElementById('locBtn').addEventListener('click', () => {
+      if (!navigator.geolocation) {
+        alert('此瀏覽器不支援定位');
+        return;
+      }
+      navigator.geolocation.getCurrentPosition(
+        updateLocation,
+        handleGeoError,
+        { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
+      );
+    });
+
+    // 3️⃣ 按鈕 – 複製 Google Maps 連結
+    document.getElementById('copyBtn').addEventListener('click', () => {
+      if (!latestMapURL) {
+        alert('尚未定位，沒有可複製的連結');
+        return;
+      }
+      navigator.clipboard.writeText(latestMapURL)
+        .then(() => alert('地圖連結已複製！'))
+        .catch(() => alert('複製失敗，請手動複製'));
+    });
+
+    /* ✅ 進階：先偵測權限狀態，若已被永久拒絕就提前顯示提示
+       if (navigator.permissions) {
+         navigator.permissions.query({ name: 'geolocation' }).then(p => {
+           if (p.state === 'denied') {
+             alert('您已拒絕定位，請到瀏覽器設定中重新允許');
+           }
+         });
+       }
+    */
+  </script>
+</body>
+</html>
