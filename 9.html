@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>顯示你周遭的 XXX (Safari 優化版)</title>
+
+  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+
+  <style>
+    body { font-family: sans-serif; }
+    #map { width: 100%; height: 400px; margin-top: 10px; background-color: #eee; }
+    #statusMessage {
+      margin-top: 10px;
+      padding: 8px;
+      border-radius: 4px;
+      min-height: 1.2em; /* 避免沒訊息時跳動 */
+      background-color: #f0f0f0;
+      border: 1px solid #ccc;
+    }
+    #statusMessage.success { background-color: #d4edda; border-color: #c3e6cb; color: #155724; }
+    #statusMessage.error { background-color: #f8d7da; border-color: #f5c6cb; color: #721c24; }
+    #statusMessage.info { background-color: #cce5ff; border-color: #b8daff; color: #004085; }
+    button:disabled { cursor: not-allowed; opacity: 0.6; }
+
+    /* ▼ 紅色半透明波紋（樣式不變） */
+    .pulse-marker {
+      position: relative;
+      width: 16px; height: 16px;
+      border-radius: 50%;
+      background: rgba(255,0,0,0.55);
+    }
+    .pulse-marker::before,
+    .pulse-marker::after {
+      content: ""; position: absolute; left: 50%; top: 50%;
+      width: 100%; height: 100%; border-radius: 50%;
+      background: rgba(255,0,0,0.35);
+      transform: translate(-50%,-50%) scale(0.8);
+      animation: pulse 2.5s infinite;
+    }
+    .pulse-marker::after { animation-delay: 1.25s; }
+    @keyframes pulse {
+      0%   { transform: translate(-50%,-50%) scale(0.8); opacity: 0.8; }
+      70%  { transform: translate(-50%,-50%) scale(3);   opacity: 0; }
+      100% { opacity: 0; }
+    }
+  </style>
+</head>
+
+<body>
+  <h1>顯示你周遭的 XXX (Safari 優化版)</h1>
+
+  <button id="locBtn">📍 取得目前位置</button>
+  <button id="copyBtn" disabled>🔗 複製地圖連結</button>
+
+  <div id="statusMessage">請點擊上方按鈕來取得您的位置。</div>
+
+  <div id="map"></div>
+
+  <script>
+    const locBtn = document.getElementById('locBtn');
+    const copyBtn = document.getElementById('copyBtn');
+    const statusMessageDiv = document.getElementById('statusMessage');
+    const mapDiv = document.getElementById('map');
+
+    let map, userMarker, fixedMarkersGroup;
+    let currentLatLng = null; // 儲存目前定位的經緯度 L.LatLng 物件
+    let latestMapURL = '';     // Google Maps 連結
+
+    // --- Leaflet 地圖相關函式 ---
+
+    function initMap(lat, lon) {
+      currentLatLng = L.latLng(lat, lon);
+      map = L.map(mapDiv).setView(currentLatLng, 16); // 初始縮放級別設為 16
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+      }).addTo(map);
+
+      // 使用者位置標記 (藍色，區別於固定點)
+      userMarker = L.marker(currentLatLng, {
+         icon: L.divIcon({
+            html: '<svg viewBox="0 0 24 24" width="24px" height="24px" style="fill:%23007AFF;stroke:white;stroke-width:1px;"><circle cx="12" cy="12" r="10"/></svg>',
+            className: 'user-location-icon', // 可以加 class 做額外樣式
+            iconSize: [24, 24],
+            iconAnchor: [12, 12] // 定位點在中心
+         })
+      }).addTo(map).bindPopup("您的目前位置").openPopup();
+
+      addFixedMarkers(currentLatLng);
+    }
+
+    function updateMap(lat, lon) {
+       currentLatLng = L.latLng(lat, lon);
+       if (!map) {
+         initMap(lat, lon);
+       } else {
+         map.setView(currentLatLng, map.getZoom()); // 只移動視野中心，不改變縮放
+         userMarker.setLatLng(currentLatLng);
+         addFixedMarkers(currentLatLng); // 更新固定點相對位置 (如果需要)
+       }
+    }
+
+    function addFixedMarkers(centerLatLng) {
+      if (fixedMarkersGroup) fixedMarkersGroup.clearLayers();
+      else fixedMarkersGroup = L.layerGroup().addTo(map);
+
+      const pts = [ // 範例點，相對於使用者位置
+        { latOffset: 0.0005, lonOffset: 0.0005 },
+        { latOffset: -0.0008, lonOffset: -0.0005 },
+        { latOffset: 0,      lonOffset: 0.0009 }
+      ];
+      const pulseIcon = L.divIcon({ className: 'pulse-marker', iconSize: [16, 16], iconAnchor: [8, 8] });
+
+      pts.forEach(p => {
+        L.marker([centerLatLng.lat + p.latOffset, centerLatLng.lng + p.lonOffset], { icon: pulseIcon })
+         .addTo(fixedMarkersGroup);
+      });
+    }
+
+    // --- 地理定位相關函式 ---
+
+    function handleLocationSuccess(pos) {
+      setStatus('定位成功！正在更新地圖...', 'success');
+      locBtn.disabled = false;
+      locBtn.textContent = '📍 重新定位';
+
+      const lat = pos.coords.latitude;
+      const lon = pos.coords.longitude;
+
+      updateMap(lat, lon);
+
+      // 更新 Google Maps 連結
+      latestMapURL = `https://www.google.com/maps?q=${lat},${lon}`; // 使用經緯度參數，更通用
+      copyBtn.disabled = false; // 啟用複製按鈕
+
+       // 可以選擇性地更新度分秒連結（如果偏好）
+       // latestMapURL = `http://maps.google.com/?q=${encodeURIComponent(decimalToDMS(lat, true))}+${encodeURIComponent(decimalToDMS(lon, false))}`;
+
+      setTimeout(() => { // 短暫顯示成功訊息後清除
+          setStatus('您可以拖動地圖或再次定位。', 'info');
+      }, 3000);
+    }
+
+    function handleLocationError(error) {
+      console.error("Geolocation Error:", error); // 在控制台保留詳細錯誤
+      locBtn.disabled = false;
+      locBtn.textContent = '📍 重新定位';
+      copyBtn.disabled = true; // 定位失敗，禁用複製
+      latestMapURL = '';
+
+      let message = `定位失敗：`;
+      let instructions = "";
+
+      switch(error.code) {
+        case error.PERMISSION_DENIED:
+          message += "您已拒絕瀏覽器的位置權限請求。";
+          instructions = `
+            <br><strong>請檢查您的 Safari 設定：</strong>
+            <ul>
+              <li><strong>在 macOS 上：</strong> 前往 Safari 選單 >「設定」>「網站」>「位置」，找到此網站，將權限改為「允許」或「詢問」。</li>
+              <li><strong>在 iPhone/iPad 上：</strong> 前往系統「設定」App >「隱私權與安全性」>「定位服務」(需開啟) > 向下找到「Safari 網站」，確保設定為「下次詢問或在我分享時」或「使用 App 期間」。(請勿設為「永不」)</li>
+            </ul>
+            修改設定後，請重新整理頁面再試一次。`;
+          break;
+        case error.POSITION_UNAVAILABLE:
+          message += "目前無法獲取您的位置資訊，可能是訊號不佳或網路問題。";
+          break;
+        case error.TIMEOUT:
+          message += "嘗試獲取位置時發生超時，請稍後再試。";
+          break;
+        default:
+          message += `發生未知錯誤 (錯誤碼 ${error.code})。`;
+          break;
+      }
+      setStatus(message + instructions, 'error');
+    }
+
+    function requestLocation() {
+      locBtn.disabled = true;
+      locBtn.textContent = '定位中...';
+      setStatus('正在請求您的位置權限...', 'info');
+      copyBtn.disabled = true;
+      latestMapURL = '';
+
+      navigator.geolocation.getCurrentPosition(
+        handleLocationSuccess,
+        handleLocationError,
+        {
+          enableHighAccuracy: true, // 嘗試更高精度
+          timeout: 15000,         // 15 秒超時
+          maximumAge: 0           // 不使用快取
+        }
+      );
+    }
+
+    // --- 按鈕事件處理 ---
+
+    locBtn.addEventListener('click', () => {
+      if (!navigator.geolocation) {
+        setStatus('抱歉，您的瀏覽器不支援地理定位功能。', 'error');
+        locBtn.disabled = true;
+        return;
+      }
+
+      // 嘗試使用 Permissions API 預先檢查狀態
+      if (navigator.permissions && navigator.permissions.query) {
+         setStatus('正在檢查位置權限...', 'info');
+         navigator.permissions.query({ name: 'geolocation' }).then(permissionStatus => {
+           console.log('Permission state:', permissionStatus.state); // 'granted', 'prompt', 'denied'
+
+           if (permissionStatus.state === 'granted') {
+             setStatus('權限已授予，正在取得位置...', 'info');
+             requestLocation();
+           } else if (permissionStatus.state === 'prompt') {
+             setStatus('需要您的位置權限，瀏覽器將會詢問...', 'info');
+             requestLocation(); // 觸發瀏覽器詢問
+           } else if (permissionStatus.state === 'denied') {
+             // 直接調用錯誤處理，顯示設定指引
+             handleLocationError({
+                code: GeolocationPositionError.PERMISSION_DENIED, // 模擬錯誤物件
+                message: "User denied Geolocation"
+             });
+             locBtn.disabled = false; // 讓使用者可以再次點擊（雖然可能還是失敗）
+             locBtn.textContent = '📍 取得目前位置';
+           }
+
+           // (可選) 監聽權限變化
+           permissionStatus.onchange = () => {
+             console.log('Permission state changed to:', permissionStatus.state);
+             setStatus(`位置權限狀態已變更為：${permissionStatus.state}`, 'info');
+             // 可以根據狀態變化更新 UI，例如如果從 denied 變成 granted，可以啟用按鈕
+             if (permissionStatus.state === 'granted' && locBtn.disabled) {
+                locBtn.disabled = false;
+                locBtn.textContent = '📍 取得目前位置';
+             } else if (permissionStatus.state === 'denied') {
+                // 可能需要再次提示設定
+             }
+           };
+
+         }).catch(err => {
+           console.error("Error querying permissions:", err);
+           // 如果查詢權限失敗，還是退回直接嘗試定位
+           setStatus('無法檢查權限，直接嘗試定位...', 'info');
+           requestLocation();
+         });
+      } else {
+        // 如果不支援 Permissions API，直接嘗試定位
+        setStatus('瀏覽器不支援權限檢查，直接嘗試定位...', 'info');
+        requestLocation();
+      }
+    });
+
+    copyBtn.addEventListener('click', () => {
+      if (!latestMapURL || !navigator.clipboard) {
+         setStatus('沒有可複製的連結，或瀏覽器不支援複製功能。', 'error');
+         return;
+       }
+       navigator.clipboard.writeText(latestMapURL)
+         .then(() => {
+           setStatus('地圖連結已成功複製到剪貼簿！', 'success');
+         })
+         .catch(err => {
+           console.error('Failed to copy: ', err);
+           setStatus('複製連結失敗，請手動複製。', 'error');
+           // 提供手動複製的機會
+           prompt("無法自動複製，請手動複製此連結:", latestMapURL);
+         });
+    });
+
+    // --- 工具函式 ---
+
+    // 十進位 → 度分秒 (如果需要此格式的連結)
+    function decimalToDMS(deg, isLat = true) {
+       const dir = deg >= 0 ? (isLat ? 'N' : 'E') : (isLat ? 'S' : 'W');
+       const abs = Math.abs(deg);
+       const d = Math.floor(abs);
+       const mFloat = (abs - d) * 60;
+       const m = Math.floor(mFloat);
+       const s = Math.round((mFloat - m) * 60 * 10) / 10;
+       return `${d}°${m}'${s}"${dir}`;
+    }
+
+    // 設定狀態訊息的輔助函式
+    function setStatus(message, type = 'info') { // type: 'info', 'success', 'error'
+      statusMessageDiv.textContent = ''; // 清空以支持 HTML 內容
+      statusMessageDiv.innerHTML = message; // 使用 innerHTML 來顯示 HTML 標籤 (如<ul>)
+      statusMessageDiv.className = type; // 應用樣式
+    }
+
+    // --- 初始化 ---
+    setStatus('請點擊按鈕開始定位。地圖將在成功定位後顯示。', 'info'); // 初始提示
+
+  </script>
+</body>
+</html>

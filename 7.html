@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <meta http-equiv="Content-Security-Policy" content="default-src * 'self' 'unsafe-inline' 'unsafe-eval' data: gap:">
+    <title>顯示你周遭的 XXX</title>
+    <!-- Leaflet -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+    <style>
+        body { padding: 0; margin: 0; font-family: -apple-system, BlinkMacSystemFont, sans-serif; }
+        .container { padding: 15px; }
+        #map { width: 100%; height: 400px; margin-top: 10px; border-radius: 8px; }
+        button { 
+            background: #007AFF; 
+            color: white; 
+            border: none; 
+            padding: 10px 15px; 
+            border-radius: 8px;
+            font-size: 16px;
+            margin-bottom: 10px;
+        }
+        .pulse-marker {
+            position: relative;
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+            background: rgba(255,0,0,0.55);
+        }
+        .pulse-marker::before,
+        .pulse-marker::after {
+            content: "";
+            position: absolute;
+            left: 50%; top: 50%;
+            width: 100%; height: 100%;
+            border-radius: 50%;
+            background: rgba(255,0,0,0.35);
+            transform: translate(-50%,-50%) scale(0.8);
+            animation: pulse 2.5s infinite;
+        }
+        .pulse-marker::after { animation-delay: 1.25s; }
+        @keyframes pulse {
+            0%   { transform: translate(-50%,-50%) scale(0.8); opacity: 0.8; }
+            70%  { transform: translate(-50%,-50%) scale(3);   opacity: 0; }
+            100% { opacity: 0; }
+        }
+        #status { 
+            margin: 10px 0; 
+            padding: 10px; 
+            background: #f8f8f8; 
+            border-radius: 8px;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h1>顯示你周遭的 XXX</h1>
+    <div id="status"></div>
+    <button id="locBtn">📍 取得目前位置</button>
+    <button id="copyBtn">🔗 複製地圖連結</button>
+    <div id="map"></div>
+</div>
+
+<script>
+let map, marker, layerGroup;
+let latestMapURL = '';
+let watchId = null;
+const statusDiv = document.getElementById('status');
+
+function showStatus(message, isError = false) {
+    statusDiv.style.display = 'block';
+    statusDiv.style.background = isError ? '#ffeeee' : '#f8f8f8';
+    statusDiv.style.color = isError ? '#cc0000' : '#333333';
+    statusDiv.innerHTML = message;
+}
+
+function decimalToDMS(deg, isLat = true) {
+    const dir = deg >= 0 ? (isLat ? 'N' : 'E') : (isLat ? 'S' : 'W');
+    const abs = Math.abs(deg);
+    const d = Math.floor(abs);
+    const mFloat = (abs - d) * 60;
+    const m = Math.floor(mFloat);
+    const s = Math.round((mFloat - m) * 60 * 10) / 10;
+    return `${d}°${m}'${s}"${dir}`;
+}
+
+function initMap(lat, lon) {
+    if (map) {
+        map.remove();
+    }
+    
+    map = L.map('map').setView([lat, lon], 15);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '&copy; OpenStreetMap contributors'
+    }).addTo(map);
+    
+    marker = L.marker([lat, lon]).addTo(map);
+    addFixedMarkers(lat, lon);
+}
+
+function addFixedMarkers(lat, lon) {
+    if (layerGroup) layerGroup.clearLayers();
+    layerGroup = L.layerGroup().addTo(map);
+    const pts = [
+        { lat: lat + 0.0005, lon: lon + 0.0005 },
+        { lat: lat - 0.0008, lon: lon - 0.0005 },
+        { lat: lat,          lon: lon + 0.0009 }
+    ];
+    const pulse = L.divIcon({ className: 'pulse-marker', iconSize: [16, 16] });
+    pts.forEach(p => L.marker([p.lat, p.lon], { icon: pulse }).addTo(layerGroup));
+}
+
+function updateLocation(pos) {
+    const lat = pos.coords.latitude;
+    const lon = pos.coords.longitude;
+    const accuracy = Math.round(pos.coords.accuracy);
+    
+    showStatus(`位置已更新！精確度: ${accuracy} 公尺`);
+    
+    latestMapURL =
+        `https://www.google.com/maps/place/` +
+        encodeURIComponent(decimalToDMS(lat, true)) + '+' +
+        encodeURIComponent(decimalToDMS(lon, false));
+    
+    if (!map) {
+        initMap(lat, lon);
+    } else {
+        map.setView([lat, lon], 15);
+        marker.setLatLng([lat, lon]);
+        addFixedMarkers(lat, lon);
+    }
+}
+
+function handleGeoError(err) {
+    let msg = '';
+    
+    switch(err.code) {
+        case 1:
+            msg = '已拒絕定位權限。<br><br>請依照以下步驟開啟：<br>1. 在 Safari 中點擊網址列左側的「aA」<br>2. 選擇「網站設定」<br>3. 將「位置」設為「允許」<br><br>或到 設定 → Safari → 進階 → 網站資料 → 清除所有網站資料';
+            break;
+        case 2:
+            msg = '無法取得位置資訊，請確認您的網路連線正常且已開啟定位服務。<br><br>在 iPhone/iPad 上：設定 → 隱私權與安全性 → 定位服務 → 確認已開啟';
+            break;
+        case 3:
+            msg = '定位請求逾時，請再試一次或移動到訊號較佳的位置';
+            break;
+        default:
+            msg = `定位失敗：${err.message}`;
+    }
+    
+    showStatus(msg, true);
+}
+
+document.getElementById('locBtn').addEventListener('click', () => {
+    if (!navigator.geolocation) {
+        showStatus('此瀏覽器不支援定位功能', true);
+        return;
+    }
+    
+    showStatus('正在取得位置...');
+    
+    // 先清除之前的監聽
+    if (watchId !== null) {
+        navigator.geolocation.clearWatch(watchId);
+    }
+    
+    // 先嘗試單次定位
+    navigator.geolocation.getCurrentPosition(
+        updateLocation,
+        handleGeoError,
+        { 
+            enableHighAccuracy: true, 
+            timeout: 15000, 
+            maximumAge: 0 
+        }
+    );
+    
+    // 然後設置持續監聽以獲得更精確的位置
+    watchId = navigator.geolocation.watchPosition(
+        updateLocation,
+        handleGeoError,
+        { 
+            enableHighAccuracy: true, 
+            timeout: 15000, 
+            maximumAge: 0 
+        }
+    );
+    
+    // 30秒後自動停止監聽以節省電量
+    setTimeout(() => {
+        if (watchId !== null) {
+            navigator.geolocation.clearWatch(watchId);
+            watchId = null;
+        }
+    }, 30000);
+});
+
+document.getElementById('copyBtn').addEventListener('click', () => {
+    if (!latestMapURL) {
+        showStatus('尚未定位，沒有可複製的連結', true);
+        return;
+    }
+    
+    // 針對 iOS Safari 的特殊處理
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(latestMapURL)
+            .then(() => showStatus('地圖連結已複製！'))
+            .catch(() => {
+                // 如果 clipboard API 失敗，使用備用方法
+                const textArea = document.createElement('textarea');
+                textArea.value = latestMapURL;
+                textArea.style.position = 'fixed';
+                textArea.style.left = '-999999px';
+                textArea.style.top = '-999999px';
+                document.body.appendChild(textArea);
+                textArea.focus();
+                textArea.select();
+                
+                try {
+                    const successful = document.execCommand('copy');
+                    showStatus(successful ? '地圖連結已複製！' : '複製失敗，請手動複製');
+                } catch (err) {
+                    showStatus('複製失敗，請手動複製：' + latestMapURL);
+                }
+                
+                document.body.removeChild(textArea);
+            });
+    } else {
+        // 舊方法備用
+        const textArea = document.createElement('textarea');
+        textArea.value = latestMapURL;
+        textArea.style.position = 'fixed';
+        textArea.style.left = '-999999px';
+        textArea.style.top = '-999999px';
+        document.body.appendChild(textArea);
+        textArea.focus();
+        textArea.select();
+        
+        try {
+            const successful = document.execCommand('copy');
+            showStatus(successful ? '地圖連結已複製！' : '複製失敗，請手動複製');
+        } catch (err) {
+            showStatus('複製失敗，請手動複製：' + latestMapURL);
+        }
+        
+        document.body.removeChild(textArea);
+    }
+});
+
+// 頁面載入時檢查權限
+document.addEventListener('DOMContentLoaded', () => {
+    if (navigator.permissions && navigator.permissions.query) {
+        navigator.permissions.query({ name: 'geolocation' })
+            .then(permissionStatus => {
+                if (permissionStatus.state === 'denied') {
+                    showStatus('您已拒絕定位權限。請在 Safari 設定中重新允許。', true);
+                } else if (permissionStatus.state === 'granted') {
+                    showStatus('已取得定位權限，點擊按鈕開始定位');
+                } else {
+                    showStatus('點擊按鈕開始定位');
+                }
+                
+                permissionStatus.onchange = function() {
+                    if (this.state === 'granted') {
+                        showStatus('已取得定位權限，點擊按鈕開始定位');
+                    }
+                };
+            })
+            .catch(error => {
+                console.log('權限查詢失敗:', error);
+            });
+    }
+});
+</script>
+</body>
+</html>

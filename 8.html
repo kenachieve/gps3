@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1.0" />
+  <title>顯示你周遭的 XXX</title>
+
+  <!-- MapKit JS -->
+  <script src="https://cdn.apple-mapkit.com/mk/5.x.x/mapkit.js"></script>
+
+  <style>
+    #map { width: 100%; height: 400px; margin-top: 10px; }
+
+    /* ▼ 紅色半透明波紋（自行調整大小、透明度、動畫時間等） */
+    .pulse-marker {
+      position: relative;
+      width: 16px; height: 16px;
+      border-radius: 50%;
+      background: rgba(255,0,0,0.55);
+    }
+    .pulse-marker::before,
+    .pulse-marker::after {
+      content: "";
+      position: absolute; left: 50%; top: 50%;
+      width: 100%; height: 100%;
+      border-radius: 50%;
+      background: rgba(255,0,0,0.35);
+      transform: translate(-50%,-50%) scale(0.8);
+      animation: pulse 2.5s infinite;
+    }
+    .pulse-marker::after { animation-delay: 1.25s; }
+    @keyframes pulse {
+      0%   { transform: translate(-50%,-50%) scale(0.8); opacity: .8; }
+      70%  { transform: translate(-50%,-50%) scale(3);   opacity: 0; }
+      100% { opacity: 0; }
+    }
+  </style>
+</head>
+
+<body>
+  <h1>顯示你周遭的 XXX</h1>
+
+  <button id="locBtn">📍 取得目前位置</button>
+  &nbsp; <strong>地圖位置分享：</strong>
+  <button id="copyBtn">🔗 複製地圖連結</button>
+
+  <div id="map"></div>
+
+  <script>
+    /* ====== MapKit JS 初始化 ====== */
+    mapkit.init({
+      authorizationCallback: done => done("YOUR_MAPKIT_JWT")   // ← 換成你的 JWT
+    });
+
+    let map   = new mapkit.Map("map", {   // 先給個世界視野，等會兒再跟蹤
+      showsUserLocation : false,
+      rotationEnabled   : false,
+      zoomEnabled       : true
+    });
+    let latestMapURL = "", pulseLayer = [];   // 複製用的連結 & 自訂波紋標記
+
+    /* 十進位 → 度分秒（產生 Google Maps 連結用） */
+    function decimalToDMS(deg, isLat = true) {
+      const dir = deg >= 0 ? (isLat ? "N" : "E") : (isLat ? "S" : "W");
+      const abs = Math.abs(deg);
+      const d = Math.floor(abs);
+      const mFloat = (abs - d) * 60;
+      const m = Math.floor(mFloat);
+      const s = Math.round((mFloat - m) * 60 * 10) / 10;
+      return `${d}°${m}'${s}"${dir}`;
+    }
+
+    /* 產生紅色波紋 Annotation */
+    function addPulse(lat, lon) {
+      // 清掉舊的波紋
+      pulseLayer.forEach(a => map.removeAnnotation(a));
+      pulseLayer = [];
+
+      const offsets = [
+        [ 0.0005,  0.0005],
+        [-0.0008, -0.0005],
+        [ 0.0000,  0.0009]
+      ];
+      offsets.forEach(([dLat, dLon]) => {
+        const el = document.createElement("div");
+        el.className = "pulse-marker";
+        const ann = new mapkit.Annotation(
+          new mapkit.Coordinate(lat + dLat, lon + dLon),
+          { element: el, anchorOffset: new DOMPoint(8, 8), calloutEnabled: false }
+        );
+        map.addAnnotation(ann);
+        pulseLayer.push(ann);
+      });
+    }
+
+    /* 更新複製用連結 & 波紋 */
+    function handleCoord(lat, lon) {
+      latestMapURL =
+        `https://www.google.com/maps/place/` +
+        encodeURIComponent(decimalToDMS(lat, true)) + "+" +
+        encodeURIComponent(decimalToDMS(lon, false));
+
+      addPulse(lat, lon);
+    }
+
+    /* 1️⃣ 取得定位（使用者手勢觸發） */
+    document.getElementById("locBtn").onclick = () => {
+      map.showsUserLocation = true;                             // 顯示藍點 :contentReference[oaicite:1]{index=1}
+      map.userTrackingMode  = mapkit.UserTrackingMode.follow;   // 視野跟隨
+    };
+
+    /* 2️⃣ 監聽藍點座標更新 */
+    map.addEventListener("userlocationupdate", () => {          // MapKit JS 事件 :contentReference[oaicite:2]{index=2}
+      const coord = map.userLocation.coordinate;
+      handleCoord(coord.latitude, coord.longitude);
+    });
+
+    /* 3️⃣ 複製 Google Maps 連結 */
+    document.getElementById("copyBtn").onclick = async () => {
+      if (!latestMapURL) { alert("尚未定位，沒有可複製的連結"); return; }
+      try {
+        await navigator.clipboard.writeText(latestMapURL);
+        alert("地圖連結已複製!");
+      } catch { alert("複製失敗，請手動複製"); }
+    };
+  </script>
+</body>
+</html>
