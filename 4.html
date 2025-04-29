@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>GPS 位置追蹤（OSM 版）</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+  <style>
+    #map {
+      width: 100%;
+      height: 400px;
+      margin-top: 10px;
+    }
+  </style>
+  <script>
+    let map, marker;
+
+    function getUserIP() {
+      return fetch('get_ip.php')
+        .then(response => response.json())
+        .then(data => data.ip)
+        .catch(() => '無法獲取 IP');
+    }
+
+    function decimalToDMS(degree, isLatitude = true) {
+      const dir = degree >= 0 ? (isLatitude ? 'N' : 'E') : (isLatitude ? 'S' : 'W');
+      const absDeg = Math.abs(degree);
+      const deg = Math.floor(absDeg);
+      const minFloat = (absDeg - deg) * 60;
+      const min = Math.floor(minFloat);
+      const sec = Math.round((minFloat - min) * 60 * 10) / 10;
+      return `${deg}°${min}'${sec}"${dir}`;
+    }
+
+    function updateShareLinks(googleMapUrl) {
+      document.getElementById("share-line").href =
+        "https://social-plugins.line.me/lineit/share?url=" + encodeURIComponent(googleMapUrl);
+    }
+
+    function copyLink() {
+      const url = document.getElementById("google_map_link").href;
+      navigator.clipboard.writeText(url).then(() => {
+        alert("地圖連結已複製！");
+      });
+    }
+
+    function generateRandomNearbyPoints(lat, lon, count = 3, radius = 0.5) {
+      const points = [];
+      for (let i = 0; i < count; i++) {
+        const randDist = Math.random() * radius; // km
+        const randAngle = Math.random() * 2 * Math.PI;
+        const dx = randDist * Math.cos(randAngle);
+        const dy = randDist * Math.sin(randAngle);
+
+        const dLat = dy / 111; // 1° ≈ 111km
+        const dLon = dx / (111 * Math.cos(lat * Math.PI / 180));
+
+        points.push({ lat: lat + dLat, lon: lon + dLon });
+      }
+      return points;
+    }
+
+     // 固定位置標記
+    function addFixedMarkers(lat, lon) {
+      const fixedPoints = [
+        { lat: lat + 0.0005, lon: lon + 0.0005 }, // 偏移0.005度，約555米
+        { lat: lat - 0.0008, lon: lon - 0.0005 },
+        { lat: lat, lon: lon + 0.0009 }  // 偏移0.005度，約555米
+      ];
+      
+      fixedPoints.forEach((pt, idx) => {
+        L.circle([pt.lat, pt.lon], {
+          radius: 25, // 半徑（公尺），依需求調整
+          color: 'green', // 邊框顏色
+          fillColor: 'limegreen', // 填充顏色
+          fillOpacity: 0.25
+        })
+          .addTo(map)
+          .bindPopup(`區域 ${idx + 1}`)
+          .openPopup();
+      });
+    }
+
+    function addNearbyMarkers(lat, lon) {
+    const nearbyPoints = generateRandomNearbyPoints(lat, lon);
+    nearbyPoints.forEach((pt, idx) => {
+      L.circle([pt.lat, pt.lon], {
+        radius: 25, // 半徑（公尺），依需求調整
+        color: 'green', // 邊框顏色
+        fillColor: 'limegreen', // 填充顏色
+        fillOpacity: 0.25
+      })
+      .addTo(map)
+      .bindPopup(`區域 ${idx + 1}`)
+      .openPopup();
+    });
+  }
+
+
+    function initMap(latitude = 25.0330, longitude = 121.5654) {
+      map = L.map('map').setView([latitude, longitude], 45);
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '&copy; OpenStreetMap contributors'
+      }).addTo(map);
+
+      marker = L.marker([latitude, longitude]).addTo(map)
+        .bindPopup("你的位置")
+        .openPopup();
+
+        addFixedMarkers(latitude, longitude);
+    }
+
+    function updateLocation(position) {
+      let latitude = position.coords.latitude;
+      let longitude = position.coords.longitude;
+
+      document.getElementById("latitude").textContent = latitude;
+      document.getElementById("longitude").textContent = longitude;
+
+      const lonDMS = decimalToDMS(longitude, false);
+      const latDMS = decimalToDMS(latitude, true);
+      document.getElementById("dms").textContent = `${lonDMS} ${latDMS}`;
+
+      const encodedLatDMS = encodeURIComponent(latDMS);
+      const encodedLonDMS = encodeURIComponent(lonDMS);
+      const googleMapDMSUrl = `https://www.google.com/maps/place/${encodedLatDMS}+${encodedLonDMS}`;
+
+      const linkElement = document.getElementById("google_map_link");
+      linkElement.href = googleMapDMSUrl;
+      linkElement.textContent = `查看地圖：${latDMS} ${lonDMS}`;
+      updateShareLinks(googleMapDMSUrl);
+
+      if (!map) {
+        initMap(latitude, longitude);
+      } else {
+        map.setView([latitude, longitude], 45);
+        marker.setLatLng([latitude, longitude]);
+        addFixedMarkers(latitude, longitude);
+      }
+
+      getUserIP().then(userIP => {
+        let deviceInfo = navigator.userAgent;
+        let data = new FormData();
+        data.append('latitude', latitude);
+        data.append('longitude', longitude);
+        data.append('user_ip', userIP);
+        data.append('device_info', deviceInfo);
+
+        fetch('gps_logger.php', {
+          method: 'POST',
+          body: data
+        })
+        .then(response => response.json())
+        .then(result => {
+          document.getElementById("status").textContent = result.message;
+          document.getElementById("device_info").textContent = deviceInfo;
+          document.getElementById("user-info").textContent = `IP: ${result.ip}, 端口: ${result.port}`;
+        })
+        .catch(error => {
+          document.getElementById("status").innerHTML = `傳輸失敗<br>${error}`;
+        });
+      });
+    }
+
+    function getLocation() {
+      if (navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(updateLocation, error => {
+          document.getElementById("status").textContent = "無法獲取位置";
+        }, { enableHighAccuracy: true });
+      } else {
+        document.getElementById("status").textContent = "此瀏覽器不支援 GPS";
+      }
+    }
+  </script>
+</head>
+<body onload="getLocation()">
+  <h1>GPS 位置追蹤（OSM 版）</h1>
+  <p><strong>經度:</strong> <span id="longitude">獲取中...</span></p>
+  <p><strong>緯度:</strong> <span id="latitude">獲取中...</span></p>
+  <p><strong>DMS 格式:</strong> <span id="dms">獲取中...</span></p>
+  <p><strong>Google 地圖（DMS）:</strong> <a id="google_map_link" href="#" target="_blank">尚未定位</a></p>
+
+  <!-- 分享按鈕區 -->
+  <div class="share-container">
+    <p><strong>LINE分享:</strong><a id="share-line" target="_blank"> 📱 分享到 Line</a></p>
+    <p><strong>地圖位置分享: </strong><button id="copy-btn" onclick="copyLink()"> 🔗 複製地圖連結</button><br><br></p>
+  </div>
+
+  <!-- 地圖 -->
+  <div id="map"></div>
+</body>
+</html>
