@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>顯示你周遭的XXX</title>
+
+  <!-- Leaflet -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+
+  <style>
+    :root{
+      --primary:#e53935;/* 主色，可自行調整 */
+    }
+    body{font-family:Arial,Helvetica,sans-serif;margin:0;padding:1rem;}
+    #map{width:100%;height:400px;margin-top:10px;}
+
+    /* 紅色半透明波紋（調整：--pulse-size, --pulse-opacity, animation 時間） */
+    .pulse-marker{
+      position:relative;width:16px;height:16px;border-radius:50%;
+      background:rgba(255,0,0,0.55);
+    }
+    .pulse-marker::before,
+    .pulse-marker::after{
+      content:"";position:absolute;left:50%;top:50%;
+      width:100%;height:100%;border-radius:50%;
+      background:rgba(255,0,0,0.35);
+      transform:translate(-50%,-50%) scale(0.8);
+      animation:pulse 2.5s infinite;
+    }
+    .pulse-marker::after{animation-delay:1.25s;}
+    @keyframes pulse{
+      0%  {transform:translate(-50%,-50%) scale(0.8);opacity:0.8;}
+      70% {transform:translate(-50%,-50%) scale(3);opacity:0;}
+      100%{opacity:0;}
+    }
+    #status{margin-top:0.5rem;color:#555;font-size:0.9rem;}
+    #loc-btn{background:var(--primary);border:none;color:#fff;padding:0.6rem 1rem;border-radius:4px;font-size:1rem;cursor:pointer;}
+    #loc-btn:disabled{opacity:0.5;cursor:not-allowed;}
+  </style>
+</head>
+<body>
+  <h1>顯示你周遭的XXX</h1>
+  <p><em>點擊「確定」立即查看您所在區域的最新動態！</em></p>
+  <button id="loc-btn">確定</button>
+  <span id="status"></span>
+  <p style="margin-top:1rem"><strong>地圖位置分享: </strong>
+    <button onclick="copyLink()"> 🔗 複製地圖連結</button>
+  </p>
+  <div id="map"></div>
+
+<script>
+let map, marker, layerGroup, latestMapURL='';
+const statusEl = document.getElementById('status');
+const btn = document.getElementById('loc-btn');
+
+/* 十進位 → 度分秒，用於 Google Maps 連結 */
+function decimalToDMS(deg,isLat=true){
+  const dir=deg>=0?(isLat?'N':'E'):(isLat?'S':'W');
+  const a=Math.abs(deg),d=Math.floor(a),
+        mFloat=(a-d)*60,m=Math.floor(mFloat),
+        s=Math.round((mFloat-m)*60*10)/10;
+  return `${d}°${m}'${s}"${dir}`;
+}
+
+/* 加入紅色波紋固定點（示範用） */
+function addFixedMarkers(lat,lon){
+  if(layerGroup) layerGroup.clearLayers();
+  layerGroup=L.layerGroup();
+  const pts=[
+    {lat:lat+0.0005, lon:lon+0.0005},
+    {lat:lat-0.0008, lon:lon-0.0005},
+    {lat,              lon:lon+0.0009}
+  ];
+  const pulse=L.divIcon({className:'pulse-marker',iconSize:[16,16]});
+  pts.forEach(p=>L.marker([p.lat,p.lon],{icon:pulse}).addTo(layerGroup));
+  layerGroup.addTo(map);
+}
+
+function initMap(lat,lon){
+  map=L.map('map').setView([lat,lon],15); // 手機上 15~16 較適中
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{
+    attribution:'&copy; OpenStreetMap contributors'
+  }).addTo(map);
+  marker=L.marker([lat,lon]).addTo(map);
+  addFixedMarkers(lat,lon);
+}
+
+function updateLocation(pos){
+  const {latitude:lat,longitude:lon} = pos.coords;
+  statusEl.textContent = '定位成功！';
+  const url=`https://www.google.com/maps/place/${encodeURIComponent(decimalToDMS(lat,true))}+${encodeURIComponent(decimalToDMS(lon,false))}`;
+  latestMapURL=url;
+  if(!map){
+    initMap(lat,lon);
+  }else{
+    map.setView([lat,lon]);
+    marker.setLatLng([lat,lon]);
+    addFixedMarkers(lat,lon);
+  }
+}
+
+function handleError(err){
+  switch(err.code){
+    case err.PERMISSION_DENIED:
+      statusEl.textContent='❌ 使用者拒絕定位權限';break;
+    case err.POSITION_UNAVAILABLE:
+      statusEl.textContent='❌ 無法取得定位資訊';break;
+    case err.TIMEOUT:
+      statusEl.textContent='❌ 取得定位逾時';break;
+    default:
+      statusEl.textContent='❌ 位置錯誤：'+err.message;
+  }
+}
+
+async function getLocation(){
+  btn.disabled = true;
+  statusEl.textContent='請稍候，正在取得定位…';
+  if(!('geolocation' in navigator)){
+    statusEl.textContent='瀏覽器不支援定位';
+    btn.disabled=false;return;
+  }
+  // 檢查權限狀態；若已被封鎖，先提示使用者到設定開啟
+  if(navigator.permissions){
+    const gStatus = await navigator.permissions.query({name:'geolocation'});
+    if(gStatus.state==='denied'){
+      statusEl.textContent='定位權限被封鎖，請到瀏覽器設定手動允許';
+      btn.disabled=false;return;
+    }
+  }
+  navigator.geolocation.getCurrentPosition(updateLocation,handleError,{enableHighAccuracy:true,timeout:10000});
+  btn.disabled=false;
+}
+
+document.getElementById('loc-btn').addEventListener('click',getLocation);
+
+function copyLink(){
+  if(latestMapURL){
+    navigator.clipboard.writeText(latestMapURL).then(()=>alert('地圖連結已複製！'));
+  }else{
+    alert('地圖尚未定位，無連結可複製');
+  }
+}
+</script>
+</body>
+</html>
