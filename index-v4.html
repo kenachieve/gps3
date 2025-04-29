@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>顯示你周遭的XXX</title>
+
+  <!-- Leaflet -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+
+  <style>
+    :root{ --primary:#e53935; }
+    body{font-family:Arial,Helvetica,sans-serif;margin:0;padding:1rem;}
+    #map{width:100%;height:400px;margin-top:10px;}
+    /* 紅色半透明波紋 */
+    .pulse-marker{
+      position:relative;width:16px;height:16px;border-radius:50%;
+      background:rgba(255,0,0,0.55);
+    }
+    .pulse-marker::before,.pulse-marker::after{
+      content:"";position:absolute;left:50%;top:50%;width:100%;height:100%;border-radius:50%;
+      background:rgba(255,0,0,0.35);transform:translate(-50%,-50%) scale(0.8);
+      animation:pulse 2.5s infinite;
+    }
+    .pulse-marker::after{animation-delay:1.25s;}
+    @keyframes pulse{0%{transform:translate(-50%,-50%) scale(.8);opacity:.8;}70%{transform:translate(-50%,-50%) scale(3);opacity:0;}100%{opacity:0;}}
+    #status{margin-top:.5rem;color:#555;font-size:.9rem;}
+  </style>
+</head>
+<body>
+  <h1>顯示你周遭的XXX</h1>
+  <p><em>若瀏覽器跳出定位對話框，請點選「允許」以顯示您周遭的最新動態！</em></p>
+  <span id="status"></span>
+  <p style="margin-top:1rem"><strong>地圖位置分享: </strong>
+    <button onclick="copyLink()"> 🔗 複製地圖連結</button>
+  </p>
+  <div id="map"></div>
+
+<script>
+let map, marker, layerGroup, latestMapURL='';
+const statusEl=document.getElementById('status');
+
+function decimalToDMS(deg,isLat=true){
+  const dir=deg>=0?(isLat?'N':'E'):(isLat?'S':'W');
+  const a=Math.abs(deg),d=Math.floor(a),mFloat=(a-d)*60,m=Math.floor(mFloat),s=Math.round((mFloat-m)*60*10)/10;
+  return `${d}°${m}'${s}"${dir}`;
+}
+function addFixedMarkers(lat,lon){
+  if(layerGroup) layerGroup.clearLayers();
+  layerGroup=L.layerGroup();
+  const pts=[{lat:lat+0.0005,lon:lon+0.0005},{lat:lat-0.0008,lon:lon-0.0005},{lat,lon:lon+0.0009}];
+  const pulse=L.divIcon({className:'pulse-marker',iconSize:[16,16]});
+  pts.forEach(p=>L.marker([p.lat,p.lon],{icon:pulse}).addTo(layerGroup));
+  layerGroup.addTo(map);
+}
+function initMap(lat,lon){
+  map=L.map('map').setView([lat,lon],15);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{attribution:'&copy; OpenStreetMap contributors'}).addTo(map);
+  marker=L.marker([lat,lon]).addTo(map);
+  addFixedMarkers(lat,lon);
+}
+function updateLocation(pos){
+  const {latitude:lat,longitude:lon}=pos.coords;
+  statusEl.textContent='定位成功！';
+  latestMapURL=`https://www.google.com/maps/place/${encodeURIComponent(decimalToDMS(lat,true))}+${encodeURIComponent(decimalToDMS(lon,false))}`;
+  if(!map){initMap(lat,lon);}else{map.setView([lat,lon]);marker.setLatLng([lat,lon]);addFixedMarkers(lat,lon);} }
+function handleError(err){
+  const msgs={1:'❌ 使用者拒絕定位權限',2:'❌ 無法取得定位資訊',3:'❌ 取得定位逾時'};
+  statusEl.textContent=msgs[err.code]||('❌ 錯誤:'+err.message);
+}
+async function requestLocation(){
+  statusEl.textContent='請稍候，正在取得定位…';
+  if(!('geolocation' in navigator)){statusEl.textContent='瀏覽器不支援定位';return;}
+  try{
+    if(navigator.permissions){
+      const s=await navigator.permissions.query({name:'geolocation'});
+      if(s.state==='denied'){statusEl.textContent='定位權限被封鎖，請到瀏覽器設定手動允許';return;}
+    }
+  }catch(e){}
+  navigator.geolocation.getCurrentPosition(updateLocation,handleError,{enableHighAccuracy:true,timeout:10000});
+}
+window.addEventListener('load',requestLocation);
+function copyLink(){latestMapURL?navigator.clipboard.writeText(latestMapURL).then(()=>alert('地圖連結已複製！')):alert('地圖尚未定位，無連結可複製');}
+</script>
+</body>
+</html>
