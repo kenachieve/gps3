@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>顯示你周遭的XXX</title>
+
+  <!-- Leaflet -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+
+  <style>
+    #map{width:100%;height:400px;margin-top:10px;}
+
+    /* 紅色半透明波紋（可自行調整寬度、透明度、動畫時間等） */
+    .pulse-marker{
+      position:relative;width:16px;height:16px;border-radius:50%;
+      background:rgba(255,0,0,0.55);
+    }
+    .pulse-marker::before,
+    .pulse-marker::after{
+      content:"";position:absolute;left:50%;top:50%;
+      width:100%;height:100%;border-radius:50%;
+      background:rgba(255,0,0,0.35);
+      transform:translate(-50%,-50%) scale(0.8);
+      animation:pulse 2.5s infinite;
+    }
+    .pulse-marker::after{animation-delay:1.25s;}
+
+    @keyframes pulse{
+      0%  {transform:translate(-50%,-50%) scale(0.8);opacity:0.8;}
+      70% {transform:translate(-50%,-50%) scale(3);opacity:0;}
+      100%{opacity:0;}
+    }
+
+    /* —— 免責聲明樣式 —— */
+    .disclaimer{
+      font-size:0.75rem;          /* 小字體 */
+      color:#666;                 /* 淺灰色 */
+      text-align:center;
+      margin:8px 0 16px 0;        /* 與地圖保持適度間距 */
+      line-height:1.4;
+    }
+  </style>
+
+  <script>
+    /* === 您原有的 JavaScript 完全不變 === */
+    let map, marker, layerGroup, latestMapURL='';
+
+    function decimalToDMS(deg,isLat=true){
+      const dir=deg>=0?(isLat?'N':'E'):(isLat?'S':'W');
+      const a=Math.abs(deg),d=Math.floor(a),
+            mFloat=(a-d)*60,m=Math.floor(mFloat),
+            s=Math.round((mFloat-m)*60*10)/10;
+      return `${d}°${m}'${s}"${dir}`;
+    }
+
+    function addFixedMarkers(lat,lon){
+      if(layerGroup) layerGroup.clearLayers();
+      layerGroup=L.layerGroup();
+      const pts=[
+        {lat:lat+0.0005, lon:lon+0.0005},
+        {lat:lat-0.0008, lon:lon-0.0005},
+        {lat,            lon:lon+0.0009}
+      ];
+      const pulse=L.divIcon({className:'pulse-marker',iconSize:[16,16]});
+      pts.forEach(p=>L.marker([p.lat,p.lon],{icon:pulse}).addTo(layerGroup));
+      layerGroup.addTo(map);
+    }
+
+    function initMap(lat,lon){
+      map=L.map('map').setView([lat,lon],45);
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{
+        attribution:'&copy; OpenStreetMap contributors'
+      }).addTo(map);
+      marker=L.marker([lat,lon]).addTo(map);
+      addFixedMarkers(lat,lon);
+    }
+
+    function updateLocation(pos){
+      const lat=pos.coords.latitude, lon=pos.coords.longitude;
+      const url=`https://www.google.com/maps/place/${
+          encodeURIComponent(decimalToDMS(lat,true))}+${
+          encodeURIComponent(decimalToDMS(lon,false))}`;
+      latestMapURL=url;
+
+      if(!map){
+        initMap(lat,lon);
+      }else{
+        map.setView([lat,lon],45);
+        marker.setLatLng([lat,lon]);
+        addFixedMarkers(lat,lon);
+      }
+    }
+
+    function getLocation(){
+      if(navigator.geolocation){
+        navigator.geolocation.getCurrentPosition(updateLocation,
+          ()=>console.warn("無法獲取位置"),{enableHighAccuracy:true});
+      }else{
+        console.warn("瀏覽器不支援 GPS");
+      }
+    }
+
+    function copyLink(){
+      if(latestMapURL){
+        navigator.clipboard.writeText(latestMapURL)
+          .then(()=>alert("地圖連結已複製！"));
+      }else{
+        alert("地圖尚未定位，無連結可複製");
+      }
+    }
+  </script>
+</head>
+
+<body onload="getLocation()">
+  <h1>顯示你周遭的XXX</h1>
+
+  <p><em>點擊「確定」立即查看您所在區域的最新動態！</em></p>
+
+  <p><strong>地圖位置分享: </strong>
+     <button onclick="copyLink()"> 🔗 複製地圖連結</button>
+  </p>
+
+  <div id="map"></div>
+
+  <!-- —— 免責聲明 —— -->
+  <p class="disclaimer">
+    免責聲明：本網站地圖資料部分來源為使用者提供及網路公開資訊，僅供參考用途。<br>
+    本站不保證內容的絕對正確、完整或最新狀態，亦不應作為正式文件、決策依據或採取行動之唯一參考。
+  </p>
+</body>
+</html>
