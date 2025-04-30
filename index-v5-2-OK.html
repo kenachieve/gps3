@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>顯示你周遭的 XXX</title>
+
+<!-- Leaflet -->
+<link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+
+<style>
+/* —— 色彩變數 —— */
+:root{
+  --brand:#1a73e8;      /* 超連結顏色 */
+  --accent:#fbbc04;     /* 按鈕顏色   */
+  --bg:#f9fafb;
+  --text:#222;
+  --muted:#666;
+}
+
+*{box-sizing:border-box;}
+body{
+  margin:0;
+  font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",sans-serif;
+  color:var(--text);
+  background:var(--bg);
+  line-height:1.6;
+}
+
+/* —— Header —— */
+header{
+  background:var(--brand);
+  color:#fff;
+  padding:0.75rem 1rem;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  gap:0.5rem;
+}
+header .logo{font-size:1.5rem;}
+header h1{margin:0;font-size:1.25rem;font-weight:700;}   /* 粗體標題 */
+
+/* —— 主容器 —— */
+main{
+  max-width:960px;
+  margin:1rem auto;
+  padding:0 1rem;
+}
+
+button{
+  cursor:pointer;
+  border:none;
+  border-radius:6px;
+  padding:0.5rem 0.75rem;
+  background:var(--accent);
+  color:#fff;
+  font-size:1rem;
+  transition:opacity .2s;
+}
+button:hover{opacity:.85;}
+button:disabled{opacity:.5;cursor:not-allowed;}
+
+#map{
+  width:100%;
+  height:420px;
+  border:1px solid #ddd;
+  border-radius:8px;
+  box-shadow:0 2px 6px rgba(0,0,0,.08);
+}
+
+/* Pulse marker */
+.pulse-marker{position:relative;width:16px;height:16px;border-radius:50%;background:rgba(255,0,0,.55);}
+.pulse-marker::before,.pulse-marker::after{
+  content:"";position:absolute;left:50%;top:50%;width:100%;height:100%;
+  border-radius:50%;background:rgba(255,0,0,.35);
+  transform:translate(-50%,-50%) scale(.8);
+  animation:pulse 2.5s infinite;
+}
+.pulse-marker::after{animation-delay:1.25s;}
+@keyframes pulse{
+  0%{transform:translate(-50%,-50%) scale(.8);opacity:.8;}
+  70%{transform:translate(-50%,-50%) scale(3);opacity:0;}
+  100%{opacity:0;}
+}
+
+/* —— Loading Spinner —— */
+#loading{
+  position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+  background:rgba(255,255,255,.6);backdrop-filter:blur(2px);
+  font-size:1rem;color:var(--muted);
+}
+#loading::after{
+  content:"";width:24px;height:24px;border:3px solid var(--brand);
+  border-top-color:transparent;border-radius:50%;margin-left:.5rem;
+  animation:spin .8s linear infinite;
+}
+@keyframes spin{to{transform:rotate(360deg);}}
+
+/* —— Toast 訊息 —— */
+.toast{
+  position:fixed;bottom:1rem;left:50%;transform:translateX(-50%);
+  background:var(--text);color:#fff;padding:.5rem 1rem;border-radius:4px;
+  opacity:0;pointer-events:none;transition:opacity .4s;
+}
+.toast.show{opacity:.9;}
+
+/* —— Footer —— */
+footer{
+  margin-top:2rem;
+  padding:1.5rem 1rem;
+  font-size:.8rem;
+  text-align:center;
+  border-top:1px solid #e0e0e0;
+}
+.disclaimer{
+  font-size:.76rem;
+  color:var(--muted);
+  margin-bottom:.45rem;
+}
+.footer-links{
+  font-size:.8rem;
+  color:var(--muted);
+}
+.footer-links a{
+  color:var(--brand);
+  text-decoration:none;
+  margin:0 .25rem;
+}
+.footer-links a:hover{text-decoration:underline;}
+</style>
+</head>
+
+<body>
+<header>
+  <span class="logo">🌐</span>
+  <h1>顯示你周遭的&nbsp;XXX</h1>
+</header>
+
+<main>
+  <p><em>允許定位後，即可查看附近標記並與朋友分享。</em></p>
+
+  <!-- 分享按鈕 -->
+  <p><strong>地圖位置分享: </strong>
+     <button id="copyBtn" disabled>🔗 複製地圖連結</button>
+  </p>
+
+  <div style="position:relative">
+    <div id="map"></div>
+    <div id="loading">定位中…</div>
+  </div>
+</main>
+
+<footer>
+  <div class="disclaimer">
+    免責聲明：本網站地圖資料部分來源為使用者提供及網路公開資訊，僅供參考用途。本站不保證內容之絕對正確、完整或最新狀態，並建議勿作為正式文件或決策之唯一依據。
+  </div>
+  <div class="footer-links">
+    <a href="#">隱私權政策</a> · <a href="#">使用條款</a> · © 2025
+  </div>
+</footer>
+
+<div id="toast" class="toast"></div>
+
+<script>
+/* ===== 變數 ===== */
+let map, marker, layerGroup, latestMapURL='';
+const loading=document.getElementById('loading');
+const copyBtn=document.getElementById('copyBtn');
+const toast=document.getElementById('toast');
+
+/* ===== 工具函式 ===== */
+function showToast(msg,duration=2500){
+  toast.textContent=msg;
+  toast.classList.add('show');
+  setTimeout(()=>toast.classList.remove('show'),duration);
+}
+function decimalToDMS(deg,isLat=true){
+  const dir=deg>=0?(isLat?'N':'E'):(isLat?'S':'W');
+  const a=Math.abs(deg),d=Math.floor(a),mFloat=(a-d)*60,m=Math.floor(mFloat);
+  const s=Math.round((mFloat-m)*60*10)/10;
+  return `${d}°${m}'${s}"${dir}`;
+}
+function addFixedMarkers(lat,lon){
+  if(layerGroup) layerGroup.clearLayers();
+  layerGroup=L.layerGroup();
+  const pts=[
+    {lat:lat+0.0005, lon:lon+0.0005},
+    {lat:lat-0.0008, lon:lon-0.0005},
+    {lat,            lon:lon+0.0009}
+  ];
+  const pulse=L.divIcon({className:'pulse-marker',iconSize:[16,16]});
+  pts.forEach(p=>L.marker([p.lat,p.lon],{icon:pulse}).addTo(layerGroup));
+  layerGroup.addTo(map);
+}
+
+/* ===== 地圖初始化與更新 ===== */
+function initMap(lat,lon){
+  map=L.map('map').setView([lat,lon],45);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{
+    attribution:'&copy; OpenStreetMap contributors'
+  }).addTo(map);
+  marker=L.marker([lat,lon]).addTo(map);
+  addFixedMarkers(lat,lon);
+}
+function updateLocation(pos){
+  const lat=pos.coords.latitude, lon=pos.coords.longitude;
+  latestMapURL=`https://www.google.com/maps/place/${encodeURIComponent(decimalToDMS(lat,true))}+${encodeURIComponent(decimalToDMS(lon,false))}`;
+  copyBtn.disabled=false;
+  if(!map){
+    initMap(lat,lon);
+  }else{
+    map.setView([lat,lon],45);
+    marker.setLatLng([lat,lon]);
+    addFixedMarkers(lat,lon);
+  }
+  loading.style.display='none';
+}
+
+/* ===== 事件處理 ===== */
+function getLocation(){
+  loading.style.display='flex';
+  if(navigator.geolocation){
+    navigator.geolocation.getCurrentPosition(updateLocation,
+      ()=>{showToast('定位失敗，請允許 GPS');loading.style.display='none';},
+      {enableHighAccuracy:true});
+  }else{
+    loading.style.display='none';
+    showToast('瀏覽器不支援 GPS');
+  }
+}
+copyBtn.addEventListener('click',()=>{
+  navigator.clipboard.writeText(latestMapURL)
+    .then(()=>showToast('地圖連結已複製！'))
+    .catch(()=>showToast('複製失敗'));
+});
+
+/* ===== 首次載入 ===== */
+window.addEventListener('load',getLocation);
+</script>
+</body>
+</html>
